@@ -7,9 +7,23 @@
 #   teacher        = EMA-tracking reference, decay = 1 - 0.05 = 0.95
 set -xeuo pipefail
 
+# Clean up Ray/vLLM worker processes after CUDA OOM or Ctrl-C so GPU memory is
+# not held by orphaned workers. Disable if sharing the same node with another
+# Ray job owned by the same user.
+cleanup_ray_on_exit=True
+
+cleanup() {
+    local exit_code=$?
+    if [[ "${cleanup_ray_on_exit}" == "True" ]]; then
+        ray stop --force || true
+    fi
+    exit "$exit_code"
+}
+trap cleanup EXIT
+
 # ---- model / data ----
 model_name=Qwen/Qwen3.5-2B
-data_dir=$HOME/data/gsm8k
+data_dir=data/gsm8k
 train_data=[${data_dir}/train.parquet]
 val_data=[${data_dir}/test.parquet]
 
@@ -18,21 +32,29 @@ nnodes=1
 n_gpus_per_node=8
 
 # ---- batch / sequence ----
-train_batch_size=32
-ppo_mini_batch_size=32
+train_batch_size=128
+val_batch_size=512
+ppo_mini_batch_size=8
 max_prompt_length=1024
-max_response_length=2048
-ppo_max_token_len_per_gpu=24576
+max_response_length=3072
+ppo_max_token_len_per_gpu=8192
+max_model_len=5120
+max_num_batched_tokens=6144
 
 # ---- optim ----
-actor_lr=1e-5
+actor_lr=1e-6
 lr_warmup_steps=10
 
 # ---- rollout ----
 rollout_n=8
-val_rollout_n=16
-rollout_tp=2
-rollout_gpu_mem_util=0.5
+rollout_top_p=0.95
+val_rollout_n=1
+val_do_sample=False
+val_temperature=0
+val_top_p=1.0
+val_top_k=-1
+rollout_tp=1
+rollout_gpu_mem_util=0.4
 
 # ---- distillation (loss) — actor.yaml defaults ----
 sdpo_alpha=0.5                       # 0=fwd KL, 0.5=JSD, 1=rev KL
@@ -52,11 +74,13 @@ rollout_is=token
 rollout_is_threshold=2.0
 
 # ---- trainer ----
-project_name=opsd_examples
+project_name=sdpo_gsm8k
 experiment_name=sdpo_qwen35_2b
 total_epochs=15
-save_freq=200
+save_freq=50
 test_freq=5
+val_before_train=False
+validation_shuffle=False
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
@@ -67,9 +91,11 @@ python3 -m verl.trainer.main_ppo \
     data.train_files="$train_data" \
     data.val_files="$val_data" \
     data.train_batch_size=$train_batch_size \
+    data.val_batch_size=$val_batch_size \
     data.max_prompt_length=$max_prompt_length \
     data.max_response_length=$max_response_length \
     data.filter_overlong_prompts=True \
+    data.validation_shuffle=$validation_shuffle \
     data.truncation=error \
     actor_rollout_ref.model.path="$model_name" \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -84,8 +110,15 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.tensor_model_parallel_size=$rollout_tp \
     actor_rollout_ref.rollout.gpu_memory_utilization=$rollout_gpu_mem_util \
     actor_rollout_ref.rollout.n=$rollout_n \
+    actor_rollout_ref.rollout.top_p=$rollout_top_p \
     actor_rollout_ref.rollout.calculate_log_probs=True \
+    actor_rollout_ref.rollout.max_model_len=$max_model_len \
+    actor_rollout_ref.rollout.max_num_batched_tokens=$max_num_batched_tokens \
     actor_rollout_ref.rollout.val_kwargs.n=$val_rollout_n \
+    actor_rollout_ref.rollout.val_kwargs.do_sample=$val_do_sample \
+    actor_rollout_ref.rollout.val_kwargs.temperature=$val_temperature \
+    actor_rollout_ref.rollout.val_kwargs.top_p=$val_top_p \
+    actor_rollout_ref.rollout.val_kwargs.top_k=$val_top_k \
     distillation.enabled=True \
     distillation.mode=self \
     distillation.self_distill.dataloader="$teacher_dataloader" \
@@ -109,6 +142,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=$total_epochs \
     trainer.save_freq=$save_freq \
     trainer.test_freq=$test_freq \
-    trainer.val_before_train=False \
-    trainer.logger='["console","wandb"]' \
+    trainer.val_before_train=$val_before_train \
+    trainer.logger='["console","swanlab"]' \
     "$@"
