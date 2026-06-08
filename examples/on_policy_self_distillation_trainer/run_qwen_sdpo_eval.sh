@@ -24,8 +24,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---- inputs ----
-# model_path=${CKPT_PATH:-/data2/haichao/opd_hc/Qwen/Qwen3.5-2B}
-model_path=${CKPT_PATH:-/data2/haichao/opd_hc/checkpoints/sdpo_gsm8k/gt_opsd_sdpo_qwen35_2b/global_step_435/hf_merged}
+model_path=${CKPT_PATH:-}
 
 test_data=${TEST_DATA:-data/gsm8k/test.parquet}
 
@@ -40,19 +39,6 @@ fi
 
 # Eval should load a HF model path directly, not resume trainer state.
 model_basename=$(basename "$model_path")
-if [[ "$model_basename" == global_step_* ]]; then
-    model_path="${model_path}/hf_merged"
-elif [[ "$model_basename" == "actor" ]]; then
-    model_path="$(dirname "$model_path")/hf_merged"
-fi
-if [[ -d "$model_path" && ! -f "$model_path/config.json" ]]; then
-    echo "model_path is not a HF model directory: $model_path/config.json is missing" >&2
-    exit 1
-fi
-if [[ ! -f "$test_data" ]]; then
-    echo "test parquet does not exist: $test_data" >&2
-    exit 1
-fi
 
 # ---- model / data ----
 train_data=[$test_data]
@@ -90,7 +76,7 @@ val_do_sample=False
 val_temperature=0.7
 val_top_p=0.95
 val_top_k=-1
-repetition_penalty=${REPETITION_PENALTY:-1.1}
+repetition_penalty=${REPETITION_PENALTY:-1.0}
 rollout_tp=1
 rollout_gpu_mem_util=0.6
 rollout_enforce_eager=False
@@ -99,7 +85,7 @@ rollout_enforce_eager=False
 project_name=sdpo_gsm8k
 experiment_name=eval_gt_opsd_sdpo_qwen35_2b
 validation_shuffle=False
-validation_data_dir=outputs/${project_name}/${experiment_name}/train
+validation_data_dir=outputs/${project_name}/${experiment_name}
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \

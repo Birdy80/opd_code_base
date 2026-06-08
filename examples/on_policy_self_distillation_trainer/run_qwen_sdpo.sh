@@ -78,11 +78,12 @@ rollout_is_threshold=2.0
 
 # ---- trainer ----
 project_name=sdpo_gsm8k
-experiment_name=gt_opsd_sdpo_qwen35_2b_20260605
+run_timestamp=$(date +%Y%m%d_%H%M%S)
+experiment_name=gt_opsd_sdpo_qwen35_2b_${run_timestamp}
 total_epochs=15
 save_freq=50
 keep_latest_checkpoint_only=True
-save_hf_model=False
+save_hf_model=True
 if [[ "$keep_latest_checkpoint_only" == "True" ]]; then
     max_actor_ckpt_to_keep=1
 else
@@ -93,7 +94,7 @@ if [[ "$save_hf_model" == "True" ]]; then
 else
     actor_checkpoint_save_contents="['model','optimizer','extra']"
 fi
-test_freq=5
+test_freq=-1
 val_before_train=False
 validation_shuffle=False
 sample_dump_path=outputs/${project_name}/${experiment_name}/self_distill_samples

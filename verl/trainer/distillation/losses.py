@@ -284,6 +284,11 @@ def distillation_loss(
         data=data,
     )
     response_mask = data["response_mask"]
+    self_distillation_mask = data.get("self_distillation_mask", None)
+    if self_distillation_mask is not None:
+        if response_mask.is_nested:
+            response_mask = response_mask.to_padded_tensor(False)
+        response_mask = response_mask * self_distillation_mask.view(-1, 1).to(response_mask.device)
     loss_agg_mode = config.loss_agg_mode
 
     # OPD trick (revisiting_opd §4.3): mask first occurrence of given special

@@ -1513,18 +1513,19 @@ class RayPPOTrainer:
 
             topk_lp = ref_out.batch["teacher_topk_log_probs"].float()  # (B, max_resp, k)
             topk_ids = ref_out.batch["teacher_topk_ids"].long()  # (B, max_resp, k)
-            # Pad to full sequence shape (B, T_full_student, k) by left-padding
-            # zeros across the student prompt portion. Matches the OPD external
-            # teacher convention so left_right_2_no_padding can re-extract them.
+            # Pad to full sequence shape (B, T_full_student, k) at the logits
+            # positions that predict each response token. The model output at
+            # prompt[-1] predicts response[0], response[0] predicts response[1],
+            # etc.; no_padding_2_padding later applies this same left shift.
             T_full = batch.batch["attention_mask"].shape[1]
             student_prompt_width = T_full - topk_lp.shape[1]
-            if student_prompt_width < 0:
+            if student_prompt_width <= 0:
                 raise RuntimeError(
-                    f"student attention_mask width {T_full} smaller than teacher response "
+                    f"student attention_mask width {T_full} cannot align teacher response "
                     f"width {topk_lp.shape[1]} — cannot align OPSD top-k teacher tensors."
                 )
-            topk_lp = F.pad(topk_lp, (0, 0, student_prompt_width, 0))
-            topk_ids = F.pad(topk_ids, (0, 0, student_prompt_width, 0))
+            topk_lp = F.pad(topk_lp, (0, 0, student_prompt_width - 1, 1))
+            topk_ids = F.pad(topk_ids, (0, 0, student_prompt_width - 1, 1))
             if not bool(sd_mask.all()):
                 mask3 = sd_mask.view(-1, 1, 1).to(topk_lp.dtype)
                 topk_lp = topk_lp * mask3
@@ -1540,14 +1541,17 @@ class RayPPOTrainer:
             if not bool(sd_mask.all()):
                 mask = sd_mask.view(-1, 1, 1).to(teacher_logprobs.dtype)
                 teacher_logprobs = teacher_logprobs * mask
-            # Pad to (B, T_full_student, 1) so left_right_2_no_padding can
-            # turn them into nested tensors keyed by the student attention_mask
-            # — same convention as the OPD external-teacher path.
+            # Pad to (B, T_full_student, 1), aligned to the logits positions
+            # that predict response tokens. See the top-k path above.
             T_full = batch.batch["attention_mask"].shape[1]
             student_prompt_width = T_full - teacher_logprobs.shape[1]
-            if student_prompt_width > 0:
-                teacher_logprobs = F.pad(teacher_logprobs, (0, 0, student_prompt_width, 0))
-                teacher_ids = F.pad(teacher_ids, (0, 0, student_prompt_width, 0))
+            if student_prompt_width <= 0:
+                raise RuntimeError(
+                    f"student attention_mask width {T_full} cannot align teacher response "
+                    f"width {teacher_logprobs.shape[1]} — cannot align OPSD teacher tensors."
+                )
+            teacher_logprobs = F.pad(teacher_logprobs, (0, 0, student_prompt_width - 1, 1))
+            teacher_ids = F.pad(teacher_ids, (0, 0, student_prompt_width - 1, 1))
             out["teacher_logprobs"] = teacher_logprobs
             out["teacher_ids"] = teacher_ids
 
