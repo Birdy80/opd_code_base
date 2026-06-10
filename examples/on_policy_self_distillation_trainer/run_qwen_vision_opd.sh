@@ -50,7 +50,7 @@ clip_ratio_low=0.2
 clip_ratio_high=0.3
 
 # ---- rollout ----
-rollout_n=4
+rollout_n=8
 rollout_do_sample=True
 rollout_temperature=1.0
 rollout_top_p=0.95
